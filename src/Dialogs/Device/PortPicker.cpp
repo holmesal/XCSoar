@@ -20,12 +20,13 @@
 #include "Android/BluetoothHelper.hpp"
 #include "Android/UsbSerialHelper.hpp"
 #include "Android/DetectDeviceListener.hpp"
-#include "thread/Mutex.hxx"
-#include <list>
 #endif
 
 #ifdef __APPLE__
 #include "Apple/BluetoothHelper.hpp"
+#endif
+
+#if defined(ANDROID) || defined(__APPLE__)
 #include "thread/Mutex.hxx"
 #include <list>
 #endif
@@ -86,21 +87,13 @@ class PortPickerWidget
 
 #ifdef __APPLE__
   bool detect_listener_added = false;
-
-  struct DetectedPort {
-    DeviceConfig::PortType type;
-    std::string address, name;
-  };
-
-  Mutex detected_mutex;
-  std::list<DetectedPort> detected_list;
-
-  UI::Notify detected_notify{[this] { OnDetectedNotification(); }};
 #endif
 #ifdef ANDROID
   Java::LocalObject detect_listener;
   Java::LocalObject usb_serial_detect_listener;
+#endif
 
+#if defined(ANDROID) || defined(__APPLE__)
   struct DetectedPort {
     DeviceConfig::PortType type;
     std::string address, name;
