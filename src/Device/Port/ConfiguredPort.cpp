@@ -17,7 +17,7 @@
 #endif
 
 #ifdef __APPLE__
-#include "Apple/Services.hpp"
+#include "Apple/BluetoothHelper.hpp"
 #include "AppleBluetoothPort.hpp"
 #endif
 
@@ -75,7 +75,7 @@ OpenPortInternal(EventLoop &event_loop, Cares::Channel &cares,
                  IOIOHelper *ioio_helper,
                  UsbSerialHelper *usb_serial_helper,
 #elif defined(__APPLE__)
-				BluetoothHelper *bluetooth_helper,
+                 BluetoothHelper *bluetooth_helper,
 #endif
                  const DeviceConfig &config, PortListener *listener,
                  DataHandler &handler)
@@ -105,6 +105,16 @@ OpenPortInternal(EventLoop &event_loop, Cares::Channel &cares,
     return OpenAndroidBleSerialPort(*bluetooth_helper,
                                     config.bluetooth_mac,
                                     listener, handler);
+#elif defined(__APPLE__)
+    if (config.bluetooth_mac.empty())
+      throw std::runtime_error("No Bluetooth address configured");
+
+    if (bluetooth_helper == nullptr)
+      throw std::runtime_error("Bluetooth not available");
+
+    return OpenAppleBleSerialPort(*bluetooth_helper,
+                                  config.bluetooth_mac,
+                                  listener, handler);
 #else
     throw std::runtime_error("Bluetooth not available");
 #endif
@@ -120,14 +130,8 @@ OpenPortInternal(EventLoop &event_loop, Cares::Channel &cares,
     return OpenAndroidBluetoothPort(*bluetooth_helper, config.bluetooth_mac,
                                     listener, handler);
 #elif defined(__APPLE__)
-    if (config.bluetooth_mac.empty())
-      throw std::runtime_error("No Bluetooth MAC configured");
-
-    if (bluetooth_helper == nullptr)
-      throw std::runtime_error("Bluetooth not available");
-
-    return OpenAppleBluetoothPort(*bluetooth_helper, config.bluetooth_mac,
-                                    listener, handler);
+    /* iOS has no public Bluetooth Classic API for non-MFi devices */
+    throw std::runtime_error("Bluetooth Classic is not available; use a BLE serial adapter");
 #else
     throw std::runtime_error("Bluetooth not available");
 #endif

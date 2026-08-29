@@ -1,71 +1,56 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The XCSoar Project
+
 #pragma once
 
-#include <array>
-#include <string_view>
-
+/**
+ * Bluetooth LE service/characteristic UUIDs known to XCSoar.
+ *
+ * Keep in sync with android/src/BluetoothUuids.java.
+ */
 namespace BluetoothUuids {
 
-constexpr std::string_view GENERIC_ACCESS_SERVICE = "00001800-0000-1000-8000-00805F9B34FB";
-constexpr std::string_view CLIENT_CHARACTERISTIC_CONFIGURATION = "00002902-0000-1000-8000-00805f9b34fb";
-constexpr std::string_view DEVICE_NAME_CHARACTERISTIC = "00002A00-0000-1000-8000-00805F9B34FB";
-constexpr std::string_view HEART_RATE_SERVICE = "0000180D-0000-1000-8000-00805F9B34FB";
-constexpr std::string_view HEART_RATE_MEASUREMENT_CHARACTERISTIC = "00002A37-0000-1000-8000-00805F9B34FB";
+/**
+ * Nordic UART Service (NUS) - a BLE serial bridge with separate RX
+ * (write) and TX (notify) characteristics.  Used by e.g. Naviter
+ * dongles, SoftRF, ESP32-based adapters.
+ */
+constexpr const char *NORDIC_UART_SERVICE =
+  "6E400001-B5A3-F393-E0A9-E50E24DCCA9E";
+
+/** NUS RX characteristic: XCSoar writes data to it */
+constexpr const char *NORDIC_UART_RX_CHARACTERISTIC =
+  "6E400002-B5A3-F393-E0A9-E50E24DCCA9E";
+
+/** NUS TX characteristic: XCSoar receives notifications from it */
+constexpr const char *NORDIC_UART_TX_CHARACTERISTIC =
+  "6E400003-B5A3-F393-E0A9-E50E24DCCA9E";
 
 /**
- * @see https://sites.google.com/view/ppgmeter/startpage
- * Engine sensors service and characteristic
+ * Microchip/ISSC transparent UART service (e.g. BlueFly Vario BLE).
  */
-constexpr std::string_view ENGINE_SENSORS_SERVICE = "D2865ECA-2C07-4610-BF03-8AEEBEF047FB";
-constexpr std::string_view ENGINE_SENSORS_CHARACTERISTIC = "D2865ECB-2C07-4610-BF03-8AEEBEF047FB";
+constexpr const char *ISSC_UART_SERVICE =
+  "49535343-FE7D-4AE5-8FA9-9FAFD205E455";
 
-constexpr std::string_view HM10_SERVICE = "0000FFE0-0000-1000-8000-00805F9B34FB";
+/** ISSC RX characteristic: XCSoar writes data to it */
+constexpr const char *ISSC_UART_RX_CHARACTERISTIC =
+  "49535343-8841-43F4-A8D4-ECBE34729BB3";
+
+/** ISSC TX characteristic: XCSoar receives notifications from it */
+constexpr const char *ISSC_UART_TX_CHARACTERISTIC =
+  "49535343-1E4D-4BD9-BA61-23C647249616";
 
 /**
- * The HM-10 and compatible bluetooth modules use a GATT characteristic
- * with this UUID for sending and receiving data.
+ * HM-10 and compatible modules: one characteristic for both
+ * directions.
  */
-constexpr std::string_view HM10_RX_TX_CHARACTERISTIC = "0000FFE1-0000-1000-8000-00805F9B34FB";
+constexpr const char *HM10_SERVICE = "FFE0";
+constexpr const char *HM10_RX_TX_CHARACTERISTIC = "FFE1";
 
-/* Flytec Sensbox */
-constexpr std::string_view FLYTEC_SENSBOX_SERVICE = "aba27100-143b-4b81-a444-edcd0000f020";
+constexpr const char *HEART_RATE_SERVICE = "180D";
 
-/**
- * @see https://github.com/flytec/SensBoxLib_iOS/blob/master/_SensBox%20Documentation/SensorBox%20BLE%20Protocol.pdf
- */
-constexpr std::string_view FLYTEC_SENSBOX_NAVIGATION_SENSOR_CHARACTERISTIC = "aba27100-143b-4b81-a444-edcd0000f022";
-constexpr std::string_view FLYTEC_SENSBOX_MOVEMENT_SENSOR_CHARACTERISTIC = "aba27100-143b-4b81-a444-edcd0000f023";
-constexpr std::string_view FLYTEC_SENSBOX_SECOND_GPS_CHARACTERISTIC = "aba27100-143b-4b81-a444-edcd0000f024";
-constexpr std::string_view FLYTEC_SENSBOX_SYSTEM_CHARACTERISTIC = "aba27100-143b-4b81-a444-edcd0000f025";
-
-
-// Helper method returning services in an array
-constexpr std::array<std::string_view, 5>
-getAllServiceUuids()
-{
-  return {
-    GENERIC_ACCESS_SERVICE,
-    HEART_RATE_SERVICE,
-    ENGINE_SENSORS_SERVICE,
-    HM10_SERVICE,
-    FLYTEC_SENSBOX_SERVICE
-  };
-}
-
-// Helper method returning characteristics in an array
-constexpr std::array<std::string_view, 9>
-getAllCharacteristicsUuids()
-{
-  return {
-    CLIENT_CHARACTERISTIC_CONFIGURATION,
-    DEVICE_NAME_CHARACTERISTIC,
-    HEART_RATE_MEASUREMENT_CHARACTERISTIC,
-    ENGINE_SENSORS_CHARACTERISTIC,
-    HM10_RX_TX_CHARACTERISTIC,
-    FLYTEC_SENSBOX_NAVIGATION_SENSOR_CHARACTERISTIC,
-    FLYTEC_SENSBOX_MOVEMENT_SENSOR_CHARACTERISTIC,
-    FLYTEC_SENSBOX_SECOND_GPS_CHARACTERISTIC,
-    FLYTEC_SENSBOX_SYSTEM_CHARACTERISTIC
-  };
-}
+/** Flytec Sensbox */
+constexpr const char *FLYTEC_SENSBOX_SERVICE =
+  "ABA27100-143B-4B81-A444-EDCD0000F020";
 
 } // namespace BluetoothUuids

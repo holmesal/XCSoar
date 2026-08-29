@@ -8,8 +8,9 @@
 class PortBridge;
 
 /**
- * A #Port implementation which transmits data over a Bluetooth RFCOMM
- * socket.
+ * A #Port implementation which transmits data over a CoreBluetooth
+ * BLE serial connection (see #PortBridge).  The Apple counterpart of
+ * #AndroidPort.
  */
 class ApplePort : public BufferedPort
 {
@@ -17,7 +18,7 @@ class ApplePort : public BufferedPort
 
 public:
   ApplePort(PortListener *_listener, DataHandler &_handler,
-              PortBridge *bridge);
+            PortBridge *bridge);
   ~ApplePort() noexcept override;
 
   /* virtual methods from class Port */

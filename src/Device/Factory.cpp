@@ -19,7 +19,6 @@
 
 #ifdef __APPLE__
 #include "Apple/BluetoothHelper.hpp"
-#include "Apple/Services.hpp"
 #include "Apple/InternalSensors.hpp"
 #endif
 
@@ -34,7 +33,7 @@ DeviceFactory::OpenPort(const DeviceConfig &config, PortListener *listener,
                     usb_serial_helper,
 #endif
 #ifdef __APPLE__
-					bluetooth_helper,
+                    bluetooth_helper,
 #endif
                     config, listener, handler);
 }
@@ -150,20 +149,3 @@ DeviceFactory::OpenBluetoothSensor(const DeviceConfig &config,
 }
 
 #endif // ANDROID
-
-
-#ifdef __APPLE__
-
-void DeviceFactory::OpenBluetoothSensor(const DeviceConfig &config,
-                                   SensorListener &listener)
-{
-  if (bluetooth_helper == nullptr)
-    throw std::runtime_error{"Bluetooth not available"};
-
-  if (config.bluetooth_mac.empty())
-    throw std::runtime_error{"No Bluetooth MAC configured"};
-
-  bluetooth_helper->connectSensor(config.bluetooth_mac, listener);
-}
-
-#endif

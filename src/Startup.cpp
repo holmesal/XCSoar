@@ -132,6 +132,7 @@
 #ifdef __APPLE__
 #include "Apple/Services.hpp"
 #include "Apple/BackgroundSave.hpp"
+#include "Apple/BluetoothHelper.hpp"
 #endif
 
 #ifdef HAVE_EDL

@@ -14,7 +14,6 @@
 #endif
 
 #ifdef __APPLE__
-#include "Apple/Services.hpp"
 #include "Apple/BluetoothHelper.hpp"
 #endif
 
@@ -31,13 +30,15 @@ DeviceConfig::IsAvailable() const noexcept
   case PortType::SERIAL:
     return true;
 
-  case PortType::RFCOMM:
   case PortType::BLE_SERIAL:
+    return IsAndroid() || IsApple();
+
+  case PortType::RFCOMM:
   case PortType::BLE_SENSOR:
   case PortType::RFCOMM_SERVER:
   case PortType::GLIDER_LINK:
   case PortType::ANDROID_USB_SERIAL:
-    return IsAndroid() || IsApple();
+    return IsAndroid();
 
   case PortType::IOIOUART:
   case PortType::DROIDSOAR_V2:
@@ -167,7 +168,7 @@ DeviceConfig::BluetoothNameStartsWith([[maybe_unused]] const char *prefix) const
                                          bluetooth_mac.c_str());
   return name != nullptr && StringStartsWith(name, prefix);
 #elif defined(__APPLE__)
-  if (port_type != PortType::RFCOMM)
+  if (!UsesBluetoothMac())
     return false;
 
   if (bluetooth_helper == nullptr)

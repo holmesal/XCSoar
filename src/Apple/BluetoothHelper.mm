@@ -1,431 +1,419 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Copyright The XCSoar Project
 
-#import "BluetoothHelper.hpp"
-#import "BluetoothUuids.hpp"
+#import "BluetoothManager.h"
+#include "BluetoothHelper.hpp"
+#include "BluetoothUuids.hpp"
+#include "PortBridge.hpp"
 #include "LogFile.hpp"
-#import "NativeDetectDeviceListener.h"
-#import "PortBridge.hpp"
-#import <CoreBluetooth/CoreBluetooth.h>
-#import <Foundation/Foundation.h>
+#include "thread/Mutex.hxx"
 
-@implementation IOSBluetoothManager {
+#include <mutex>
+#include <set>
+#include <stdexcept>
+
+#include <string.h>
+
+BluetoothHelper *bluetooth_helper;
+
+/**
+ * NSUserDefaults key for the identifier -> name cache.  CoreBluetooth
+ * only knows names of peripherals it has seen since boot, but XCSoar
+ * wants to display the configured device's name right at startup.
+ */
+static NSString *const kNamesDefaultsKey = @"XCSoarBluetoothDeviceNames";
+
+/**
+ * Bit set in the per-peripheral "already reported" value when the
+ * report included a name.
+ */
+static constexpr uint64_t REPORTED_WITH_NAME = 1ULL << 63;
+
+static uint64_t
+FeaturesFromServiceUuids(NSArray<CBUUID *> *uuids) noexcept
+{
+  if (uuids == nil)
+    return 0;
+
+  static CBUUID *const nus = [CBUUID UUIDWithString:@(BluetoothUuids::NORDIC_UART_SERVICE)];
+  static CBUUID *const issc = [CBUUID UUIDWithString:@(BluetoothUuids::ISSC_UART_SERVICE)];
+  static CBUUID *const hm10 = [CBUUID UUIDWithString:@(BluetoothUuids::HM10_SERVICE)];
+  static CBUUID *const heart_rate = [CBUUID UUIDWithString:@(BluetoothUuids::HEART_RATE_SERVICE)];
+  static CBUUID *const sensbox = [CBUUID UUIDWithString:@(BluetoothUuids::FLYTEC_SENSBOX_SERVICE)];
+
+  uint64_t features = 0;
+  for (CBUUID *uuid in uuids) {
+    if ([uuid isEqual:nus] || [uuid isEqual:issc] || [uuid isEqual:hm10])
+      features |= DetectDeviceListener::FEATURE_BLE_SERIAL;
+    else if ([uuid isEqual:heart_rate])
+      features |= DetectDeviceListener::FEATURE_HEART_RATE;
+    else if ([uuid isEqual:sensbox])
+      features |= DetectDeviceListener::FEATURE_FLYTEC_SENSBOX;
+  }
+
+  return features;
 }
+
+static const char *
+StateName(CBManagerState state) noexcept
+{
+  switch (state) {
+  case CBManagerStatePoweredOn: return "powered on";
+  case CBManagerStatePoweredOff: return "powered off";
+  case CBManagerStateUnsupported: return "unsupported";
+  case CBManagerStateUnauthorized: return "unauthorized";
+  case CBManagerStateResetting: return "resetting";
+  case CBManagerStateUnknown: break;
+  }
+  return "unknown";
+}
+
+@implementation XCSBluetoothManager {
+  dispatch_queue_t _queue;
+  CBCentralManager *_central;
+
+  /** protects listeners, names and reported */
+  Mutex mutex;
+
+  std::set<DetectDeviceListener *> listeners;
+
+  /** peripheral identifier -> advertised name */
+  NSMutableDictionary<NSString *, NSString *> *names;
+  bool namesDirty;
+
+  /**
+   * Peripherals already reported to the listeners during the
+   * current scan, with the features (and REPORTED_WITH_NAME) they
+   * were reported with.  Used to throttle the flood of duplicate
+   * advertisements.
+   */
+  NSMutableDictionary<NSString *, NSNumber *> *reported;
+
+  /** only accessed on the queue */
+  NSMutableArray<XCSBleSerialPort *> *ports;
+  BOOL scanning;
+}
+
+@synthesize queue = _queue;
+@synthesize central = _central;
 
 - (instancetype)init
 {
   self = [super init];
   if (self) {
-    _centralManager = [[CBCentralManager alloc] initWithDelegate:self
-                                                           queue:nil];
-    _discoveredPeripherals = [NSMutableDictionary dictionary];
-    _listeners = [NSHashTable weakObjectsHashTable];
-    _activeConnections = [NSMutableDictionary dictionary];
+    _queue = dispatch_queue_create("org.xcsoar.bluetooth", DISPATCH_QUEUE_SERIAL);
+    ports = [NSMutableArray array];
+    reported = [NSMutableDictionary dictionary];
+    namesDirty = false;
+
+    NSDictionary *saved = [[NSUserDefaults standardUserDefaults]
+                            dictionaryForKey:kNamesDefaultsKey];
+    names = saved != nil
+      ? [saved mutableCopy]
+      : [NSMutableDictionary dictionary];
+
+    /* no system "turn on Bluetooth" alert; XCSoar has its own
+       "Bluetooth is disabled" message */
+    NSDictionary *options = @{CBCentralManagerOptionShowPowerAlertKey: @NO};
+    _central = [[CBCentralManager alloc] initWithDelegate:self
+                                                    queue:_queue
+                                                  options:options];
   }
   return self;
 }
 
-- (void)centralManagerDidUpdateState:(CBCentralManager *)central
+- (BOOL)isPoweredOn
 {
-  switch (central.state) {
-  case CBManagerStatePoweredOn:
-    LogFormat("Bluetooth is ON");
-    break;
-  case CBManagerStatePoweredOff:
-    LogFormat("Bluetooth is OFF");
-    break;
-  case CBManagerStateUnsupported:
-    LogFormat("Bluetooth unsupported");
-    break;
-  case CBManagerStateUnauthorized:
-    LogFormat("Bluetooth unauthorized");
-    break;
-  case CBManagerStateResetting:
-    LogFormat("Bluetooth resetting");
-    break;
-  case CBManagerStateUnknown:
-  default:
-    LogFormat("Bluetooth state unknown");
-    break;
+  return _central.state == CBManagerStatePoweredOn;
+}
+
+- (BOOL)isUnsupported
+{
+  return _central.state == CBManagerStateUnsupported;
+}
+
+/** caller must hold the mutex */
+- (void)persistNamesLocked
+{
+  if (!namesDirty)
+    return;
+
+  namesDirty = false;
+  [[NSUserDefaults standardUserDefaults] setObject:[names copy]
+                                            forKey:kNamesDefaultsKey];
+}
+
+- (nullable NSString *)nameForIdentifier:(NSString *)identifier
+{
+  {
+    const std::lock_guard lock{mutex};
+    NSString *name = names[identifier];
+    if (name != nil)
+      return name;
+  }
+
+  if (![self isPoweredOn])
+    return nil;
+
+  NSUUID *uuid = [[NSUUID alloc] initWithUUIDString:identifier];
+  if (uuid == nil)
+    return nil;
+
+  NSArray<CBPeripheral *> *known =
+    [_central retrievePeripheralsWithIdentifiers:@[uuid]];
+  NSString *name = known.firstObject.name;
+  if (name.length == 0)
+    return nil;
+
+  const std::lock_guard lock{mutex};
+  names[identifier] = name;
+  namesDirty = true;
+  [self persistNamesLocked];
+  return name;
+}
+
+- (void)addDetectDeviceListener:(DetectDeviceListener *)listener
+{
+  {
+    const std::lock_guard lock{mutex};
+    listeners.insert(listener);
+  }
+
+  dispatch_async(_queue, ^{ [self updateScanning]; });
+}
+
+- (void)removeDetectDeviceListener:(DetectDeviceListener *)listener
+{
+  {
+    const std::lock_guard lock{mutex};
+    listeners.erase(listener);
+  }
+
+  dispatch_async(_queue, ^{ [self updateScanning]; });
+}
+
+- (void)updateScanning
+{
+  bool need;
+  {
+    const std::lock_guard lock{mutex};
+    need = !listeners.empty();
+  }
+
+  if (!need)
+    for (XCSBleSerialPort *port in ports)
+      if ([port needsScan]) {
+        need = true;
+        break;
+      }
+
+  if (need && !scanning && [self isPoweredOn]) {
+    {
+      const std::lock_guard lock{mutex};
+      [reported removeAllObjects];
+    }
+
+    LogFmt("BLE: scan started");
+    /* allow duplicates so we see the scan response carrying the
+       device name, which is often missing from the first
+       advertisement; didDiscoverPeripheral throttles what reaches
+       the listeners */
+    [_central scanForPeripheralsWithServices:nil
+                                     options:@{CBCentralManagerScanOptionAllowDuplicatesKey: @YES}];
+    scanning = YES;
+  } else if (!need && scanning) {
+    LogFmt("BLE: scan stopped");
+    [_central stopScan];
+    scanning = NO;
   }
 }
 
-- (BOOL)isBluetoothEnabled
+- (XCSBleSerialPort *)openBleSerialPort:(NSString *)address
 {
-  return self.centralManager.state == CBManagerStatePoweredOn;
+  NSUUID *uuid = [[NSUUID alloc] initWithUUIDString:address];
+  XCSBleSerialPort *port =
+    [[XCSBleSerialPort alloc] initWithManager:self
+                                   identifier:uuid
+                                   targetName:uuid == nil ? address : nil];
+
+  dispatch_sync(_queue, ^{
+    [ports addObject:port];
+    [port start];
+    [self updateScanning];
+  });
+
+  return port;
 }
 
-- (NSString *)nameForDeviceAddress:(NSString *)address
+- (void)portClosed:(XCSBleSerialPort *)port
 {
-  CBPeripheral *peripheral = self.discoveredPeripherals[address];
-  if (peripheral && peripheral.name.length > 0) {
-    return peripheral.name;
-  }
+  [ports removeObject:port];
+  [self updateScanning];
+}
+
+- (nullable XCSBleSerialPort *)portForPeripheral:(CBPeripheral *)peripheral
+{
+  for (XCSBleSerialPort *port in ports)
+    if (port.peripheral == peripheral ||
+        [port.identifier isEqual:peripheral.identifier])
+      return port;
   return nil;
 }
 
-- (void)centralManager:(CBCentralManager *)central
-    didDiscoverPeripheral:(CBPeripheral *)peripheral
-        advertisementData:(NSDictionary<NSString *, id> *)advertisementData
-                     RSSI:(NSNumber *)RSSI
-{
-  bool peripheralWillBeDetected = true; // TODO (debug=true; prod=false)
+/* CBCentralManagerDelegate */
 
+- (void)centralManagerDidUpdateState:(CBCentralManager *)central
+{
+  LogFmt("BLE: Bluetooth {}", StateName(central.state));
+
+  if (central.state == CBManagerStatePoweredOn) {
+    for (XCSBleSerialPort *port in [ports copy])
+      [port managerPoweredOn];
+    [self updateScanning];
+  } else {
+    /* CoreBluetooth forgets all scans and connections when the
+       radio goes away */
+    scanning = NO;
+    for (XCSBleSerialPort *port in [ports copy])
+      [port managerPoweredOff];
+  }
+}
+
+- (void)centralManager:(CBCentralManager *)central
+ didDiscoverPeripheral:(CBPeripheral *)peripheral
+     advertisementData:(NSDictionary<NSString *, id> *)advertisementData
+                  RSSI:(NSNumber *)RSSI
+{
   NSString *identifier = peripheral.identifier.UUIDString;
-  self.discoveredPeripherals[identifier] = peripheral;
 
-  // // Falls Pending-Connect → sofort verbinden
-  // if (self.pendingConnectionAddress &&
-  // 	[identifier isEqualToString:self.pendingConnectionAddress])
-  // {
-  // 	LogFormat("Pending device %s found, connecting...", [peripheral.name
-  // UTF8String]); 	self.pendingConnectionAddress = nil; 	[self.centralManager
-  // stopScan];
+  NSString *name = advertisementData[CBAdvertisementDataLocalNameKey];
+  if (name.length == 0)
+    name = peripheral.name;
+  if (name.length == 0)
+    name = nil;
 
-  // 	PortBridge *bridge = new PortBridge();
-  // 	_activeConnections[peripheral] = [NSValue valueWithPointer:bridge];
-  // 	peripheral.delegate = self;
-  // 	[self.centralManager connectPeripheral:peripheral options:nil];
-  // 	return;
-  // }
+  const uint64_t features =
+    FeaturesFromServiceUuids(advertisementData[CBAdvertisementDataServiceUUIDsKey]) |
+    FeaturesFromServiceUuids(advertisementData[CBAdvertisementDataOverflowServiceUUIDsKey]);
 
-  // TODO this does not work yet. For debugging set peripheralWillBeDetected = true
-  NSArray<CBUUID *> *serviceUUIDs =
-      advertisementData[CBAdvertisementDataServiceUUIDsKey];
-  if (serviceUUIDs) {
-    auto allServiceUuids = BluetoothUuids::getAllServiceUuids();
-    for (CBUUID *uuid in serviceUUIDs) {
-      NSString *uuidString = uuid.UUIDString;
-      for (auto uuid_sv : allServiceUuids) {
-        NSString *serviceUuidString =
-            [NSString stringWithUTF8String:uuid_sv.data()];
-        if ([serviceUuidString caseInsensitiveCompare:uuidString] ==
-            NSOrderedSame) {
-          peripheralWillBeDetected = true;
-          LogFormat("===> DEBUG Service UUID found in advertisement: %s",
-                    uuidString.UTF8String);
-        }
-      }
+  if (name != nil) {
+    const std::lock_guard lock{mutex};
+    if (![names[identifier] isEqualToString:name]) {
+      names[identifier] = name;
+      namesDirty = true;
+      [self persistNamesLocked];
     }
   }
 
-  if (peripheralWillBeDetected) {
-    uint64_t features = 0;
+  /* is somebody waiting for this peripheral? */
+  for (XCSBleSerialPort *port in [ports copy])
+    if (port.peripheral == nil &&
+        [port matchesDiscoveredPeripheral:peripheral name:name])
+      [port attachDiscoveredPeripheral:peripheral];
 
-    for (CBUUID *uuid in serviceUUIDs) {
-      NSString *uuidString = uuid.UUIDString;
-
-      NSString *hm10NSString =
-          [NSString stringWithUTF8String:BluetoothUuids::HM10_SERVICE.data()];
-      NSString *heartRateNSString = [NSString
-          stringWithUTF8String:BluetoothUuids::HEART_RATE_SERVICE.data()];
-      NSString *flytecNSString = [NSString
-          stringWithUTF8String:BluetoothUuids::FLYTEC_SENSBOX_SERVICE.data()];
-
-      if ([uuidString caseInsensitiveCompare:hm10NSString] == NSOrderedSame) {
-        features |= DetectDeviceListener::FEATURE_HM10;
-      } else if ([uuidString caseInsensitiveCompare:heartRateNSString] ==
-                 NSOrderedSame) {
-        features |= DetectDeviceListener::FEATURE_HEART_RATE;
-      } else if ([uuidString caseInsensitiveCompare:flytecNSString] ==
-                 NSOrderedSame) {
-        features |= DetectDeviceListener::FEATURE_FLYTEC_SENSBOX;
-      }
-    }
-
-    // LogFormat("=====> DEBUG FEATURES %llu", features);
-
-    for (NativeDetectDeviceListener *listener in self.listeners) {
-      // All devices detected via CoreBluetooth are iOS BLE devices. However,
-      // BLUETOOTH_CLASSIC is used here because XCSoar requires it for the
-      // interface and driver selection.
-      int type =
-          static_cast<int>(DetectDeviceListener::Type::BLUETOOTH_CLASSIC);
-      [listener onDeviceDetected:type
-                         address:identifier
-                            name:[self nameForDeviceAddress:identifier]
-                        features:features];
-    }
-  }
-}
-
-- (void)startScan
-{
-  [self.centralManager scanForPeripheralsWithServices:nil options:nil];
-}
-
-- (void)stopScan
-{
-  [self.centralManager stopScan];
-}
-
-- (void)addListener:(NativeDetectDeviceListener *)listener
-{
-  [self startScan];
-  if (!listener) return;
-  [self.listeners addObject:listener];
-}
-
-- (void)removeListener:(NativeDetectDeviceListener *)listener
-{
-  [self stopScan];
-  if (!listener) return;
-  [self.listeners removeObject:listener];
-}
-
-- (void)connectSensor:(NSString *)deviceAddress
-             listener:(SensorListener &)listener
-{
-  CBPeripheral *peripheral = self.discoveredPeripherals[deviceAddress];
-  if (!peripheral) {
-    LogFormat("Device %s not found", [deviceAddress UTF8String]);
+  if (name == nil && features == 0)
+    /* anonymous device without a service XCSoar knows: not worth
+       listing */
     return;
-  }
 
-  LogFormat("Connecting to %s", [peripheral.name UTF8String]);
-  peripheral.delegate = self;
-  [self.centralManager connectPeripheral:peripheral options:nil];
-}
+  const std::lock_guard lock{mutex};
 
-- (PortBridge *)connectToDevice:(NSString *)deviceAddress
-{
-  CBPeripheral *peripheral = self.discoveredPeripherals[deviceAddress];
+  const uint64_t key = features | (name != nil ? REPORTED_WITH_NAME : 0);
+  NSNumber *previous = reported[identifier];
+  if (previous != nil && previous.unsignedLongLongValue == key)
+    return;
+  reported[identifier] = @(key);
 
-  if (!peripheral) {
-    NSUUID *uuid = [[NSUUID alloc] initWithUUIDString:deviceAddress];
-    NSArray *peripherals =
-        [self.centralManager retrievePeripheralsWithIdentifiers:@[ uuid ]];
-    if (peripherals.count > 0) {
-      peripheral = peripherals.firstObject;
-      self.discoveredPeripherals[deviceAddress] = peripheral;
-    }
-  }
-
-  if (!peripheral) {
-    LogFormat("Device %s not found, scanning...", [deviceAddress UTF8String]);
-    self.pendingConnectionAddress = deviceAddress;
-    [self.centralManager scanForPeripheralsWithServices:nil options:nil];
-    return nullptr; // Erst verbinden, wenn gefunden
-  }
-
-  PortBridge *bridge = new PortBridge([deviceAddress UTF8String]);
-  _activeConnections[peripheral] = [NSValue valueWithPointer:bridge];
-  peripheral.delegate = self;
-
-  // Do not create the PortBridge here yet, as the connection is asynchronous.
-  [self.centralManager connectPeripheral:peripheral options:nil];
-  return bridge;
+  for (DetectDeviceListener *listener : listeners)
+    listener->OnDeviceDetected(DetectDeviceListener::Type::BLUETOOTH_LE,
+                               identifier.UTF8String,
+                               name != nil ? name.UTF8String : nullptr,
+                               features);
 }
 
 - (void)centralManager:(CBCentralManager *)central
-    didConnectPeripheral:(CBPeripheral *)peripheral
+  didConnectPeripheral:(CBPeripheral *)peripheral
 {
-  LogFormat("Connected with %s", [peripheral.name UTF8String]);
-  [peripheral discoverServices:nil];
-  //   PortBridge *bridge = new PortBridge();
-  //   _activeConnections[peripheral] = [NSValue valueWithPointer:bridge];
-}
-
-- (void)peripheral:(CBPeripheral *)peripheral
-    didDiscoverServices:(NSError *)error
-{
-  if (error) {
-    LogFormat("Error discovering services: %s", [[error localizedDescription] UTF8String]);
-    return;
-  }
-
-  for (CBService *service in peripheral.services) {
-    [peripheral discoverCharacteristics:nil forService:service];
-  }
-}
-
-- (void)peripheral:(CBPeripheral *)peripheral
-    didDiscoverCharacteristicsForService:(CBService *)service
-                                   error:(NSError *)error
-{
-  if (error) {
-    LogFormat("Error discovering characteristics: %s", [[error localizedDescription] UTF8String]);
-    return;
-  }
-
-  for (CBCharacteristic *characteristic in service.characteristics) {
-    if (characteristic.properties & CBCharacteristicPropertyNotify ||
-        characteristic.properties & CBCharacteristicPropertyIndicate) {
-      [peripheral setNotifyValue:YES forCharacteristic:characteristic];
-    //   [peripheral readValueForCharacteristic:characteristic]; // TODO remove?
-    }
-  }
-}
-
-- (void)peripheral:(CBPeripheral *)peripheral
-    didUpdateValueForCharacteristic:(CBCharacteristic *)characteristic
-                              error:(NSError *)error
-{
-  if (error != nil) {
-    LogFormat("Error updating value for characteristic: %s", [error.localizedDescription UTF8String]);
-    return;
-  }
-
-  NSValue *bridgeValue = _activeConnections[peripheral];
-  if (bridgeValue == nil) {
-    LogFormat("No active bridge for peripheral %s", [peripheral.name UTF8String]);
-    return;
-  }
-
-  PortBridge *bridge = (PortBridge *)[bridgeValue pointerValue];
-  NSData *value = characteristic.value;
-  if (value == nil || value.length == 0) {
-    return;
-  }
-
-  const void *bytes = [value bytes];
-  size_t length = [value length];
-
-  bridge->getInputListener()->DataReceived({(const std::byte *)bytes, length});
+  [[self portForPeripheral:peripheral] didConnect];
 }
 
 - (void)centralManager:(CBCentralManager *)central
-    didFailToConnectPeripheral:(CBPeripheral *)peripheral
-                         error:(NSError *)error
+didFailToConnectPeripheral:(CBPeripheral *)peripheral
+                 error:(nullable NSError *)error
 {
-  LogFormat("Connection to %s failed: %s", [peripheral.name UTF8String],
-            [error.localizedDescription UTF8String]);
+  [[self portForPeripheral:peripheral] didFailToConnect:error];
 }
 
-- (BOOL)writeData:(NSData *)data toDeviceAddress:(NSString *)address
+- (void)centralManager:(CBCentralManager *)central
+didDisconnectPeripheral:(CBPeripheral *)peripheral
+                 error:(nullable NSError *)error
 {
-  CBPeripheral *peripheral = self.discoveredPeripherals[address];
-  if (!peripheral) {
-    LogFormat("Peripheral %s not found", [address UTF8String]);
-    return NO;
-  }
-
-  for (CBService *service in peripheral.services) {
-    for (CBCharacteristic *characteristic in service.characteristics) {
-      if (characteristic.properties & CBCharacteristicPropertyWrite ||
-          characteristic.properties & CBCharacteristicPropertyWriteWithoutResponse) {
-
-        CBCharacteristicWriteType type =
-            (characteristic.properties & CBCharacteristicPropertyWriteWithoutResponse)
-              ? CBCharacteristicWriteWithoutResponse
-              : CBCharacteristicWriteWithResponse;
-
-        [peripheral writeValue:data forCharacteristic:characteristic type:type];
-
-        // LogFormat("Wrote %lu bytes to %@ (service %@, characteristic %@)",
-        //     (unsigned long)data.length,
-        //     peripheral.name,
-        //     service.UUID.UUIDString,
-        //     characteristic.UUID.UUIDString);
-
-        return YES;
-      }
-    }
-  }
-
-  LogFormat("No writable characteristic found for %s", [peripheral.name UTF8String]);
-  return NO;
+  [[self portForPeripheral:peripheral] didDisconnect:error];
 }
 
 @end
 
-BluetoothHelperIOS::BluetoothHelperIOS()
+/* C++ facade */
+
+BluetoothHelper::BluetoothHelper() noexcept
+  :manager([[XCSBluetoothManager alloc] init])
 {
-  manager = [[IOSBluetoothManager alloc] init];
 }
 
-BluetoothHelperIOS::~BluetoothHelperIOS() { manager = nil; }
-
-bool
-BluetoothHelperIOS::HasBluetoothSupport() const noexcept
+BluetoothHelper::~BluetoothHelper() noexcept
 {
-  CBManagerState state = manager.centralManager.state;
-  if (state == CBManagerStateUnsupported) {
-    return false;
-  }
-  return true;
+  manager = nil;
 }
 
 bool
-BluetoothHelperIOS::IsEnabled() const noexcept
+BluetoothHelper::HasBluetoothSupport() const noexcept
 {
-  return [manager isBluetoothEnabled];
+  return ![manager isUnsupported];
+}
+
+bool
+BluetoothHelper::IsEnabled() const noexcept
+{
+  return [manager isPoweredOn];
 }
 
 const char *
-BluetoothHelperIOS::GetNameFromAddress(const char *address) const noexcept
+BluetoothHelper::GetNameFromAddress(const char *address) const noexcept
 {
-  if (!address) return nullptr;
+  if (address == nullptr || *address == 0)
+    return nullptr;
 
-  NSString *addrStr = [NSString stringWithUTF8String:address];
-  NSString *name = [manager nameForDeviceAddress:addrStr];
+  NSString *name = [manager nameForIdentifier:@(address)];
+  if (name == nil)
+    return nullptr;
 
-  if (!name) return nullptr;
-
-  // TODO: Must return a pointer to static memory
-  // Using a simple static buffer here (not thread-safe, for demo purposes)
   static thread_local char buffer[256];
-  strncpy(buffer, [name UTF8String], sizeof(buffer));
-  buffer[sizeof(buffer) - 1] = '\0';
+  strncpy(buffer, name.UTF8String, sizeof(buffer) - 1);
+  buffer[sizeof(buffer) - 1] = 0;
   return buffer;
 }
 
-NativeDetectDeviceListener *
-BluetoothHelperIOS::AddDetectDeviceListener(
-    DetectDeviceListener &listener) noexcept
+void
+BluetoothHelper::AddDetectDeviceListener(DetectDeviceListener &l) noexcept
 {
-  NativeDetectDeviceListener *nativeListener =
-      [[NativeDetectDeviceListener alloc] initWithCppListener:&listener];
-  [manager addListener:nativeListener];
-  return nativeListener;
+  [manager addDetectDeviceListener:&l];
 }
 
 void
-BluetoothHelperIOS::RemoveDetectDeviceListener(
-    NativeDetectDeviceListener *listener) noexcept
+BluetoothHelper::RemoveDetectDeviceListener(DetectDeviceListener &l) noexcept
 {
-  [manager removeListener:listener];
-}
-
-void
-BluetoothHelperIOS::connectSensor(const char *address,
-                                  SensorListener &listener)
-{
-  if (!address) return;
-
-  NSString *addrStr = [NSString stringWithUTF8String:address];
-  [manager connectSensor:addrStr listener:listener];
+  [manager removeDetectDeviceListener:&l];
 }
 
 PortBridge *
-BluetoothHelperIOS::connect(const char *address)
+BluetoothHelper::connectBleSerial(const char *address)
 {
-  if (!address) return nullptr;
+  if (address == nullptr || *address == 0)
+    throw std::runtime_error{"No Bluetooth address configured"};
 
-  NSString *addrStr = [NSString stringWithUTF8String:address];
-  return [manager connectToDevice:addrStr];
-}
+  if ([manager isUnsupported])
+    throw std::runtime_error{"Bluetooth LE is not supported on this device"};
 
-PortBridge *
-BluetoothHelperIOS::connectHM10(const char *address)
-{
-  if (!address) return nullptr;
-
-  NSString *addrStr = [NSString stringWithUTF8String:address];
-  return [manager connectToDevice:addrStr];
-}
-
-PortBridge *
-BluetoothHelperIOS::createServer()
-{
-  // TODO
-  return nullptr;
-  // PortBridge *bridge = [manager createBluetoothServer];
-  // return bridge;
-}
-
-extern "C" BluetoothHelper *
-CreateBluetoothHelper()
-{
-  return new BluetoothHelperIOS();
+  XCSBleSerialPort *port = [manager openBleSerialPort:@(address)];
+  return new PortBridge(port);
 }

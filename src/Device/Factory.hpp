@@ -71,7 +71,7 @@ public:
      usb_serial_helper(_usb_serial_helper)
 #endif
 #ifdef __APPLE__
-	, bluetooth_helper(_bluetooth_helper)
+     , bluetooth_helper(_bluetooth_helper)
 #endif
     {}
 
@@ -89,9 +89,5 @@ public:
   Java::LocalCloseable OpenVoltage(SensorListener &listener);
   Java::LocalCloseable OpenGliderLink(SensorListener &listener);
   Java::LocalCloseable OpenBluetoothSensor(const DeviceConfig &config, SensorListener &listener);
-#endif
-
-#ifdef __APPLE__
-  void OpenBluetoothSensor(const DeviceConfig &config, SensorListener &listener);
 #endif
 };

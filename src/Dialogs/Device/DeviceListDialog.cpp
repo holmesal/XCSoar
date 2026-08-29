@@ -48,7 +48,6 @@
 #endif
 
 #ifdef __APPLE__
-#include "Apple/Services.hpp"
 #include "Apple/BluetoothHelper.hpp"
 #endif
 
@@ -598,9 +597,7 @@ DeviceListWidget::ReconnectCurrent()
 #elif defined(__APPLE__)
   const DeviceConfig &config =
     CommonInterface::SetSystemSettings().devices[current];
-  if ((config.port_type == DeviceConfig::PortType::RFCOMM ||
-       config.port_type == DeviceConfig::PortType::BLE_HM10 ||
-       config.port_type == DeviceConfig::PortType::RFCOMM_SERVER) &&
+  if (config.UsesBluetoothMac() &&
       bluetooth_helper != nullptr &&
       !bluetooth_helper->IsEnabled()) {
     ShowMessageBox(_("Bluetooth is disabled"), _("Reconnect"),

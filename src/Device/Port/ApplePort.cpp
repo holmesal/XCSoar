@@ -8,7 +8,7 @@
 #include <stdexcept>
 
 ApplePort::ApplePort(PortListener *_listener, DataHandler &_handler,
-                         PortBridge *_bridge)
+                     PortBridge *_bridge)
   :BufferedPort(_listener, _handler), bridge(_bridge)
 {
   assert(bridge != nullptr);
@@ -20,8 +20,10 @@ ApplePort::ApplePort(PortListener *_listener, DataHandler &_handler,
 ApplePort::~ApplePort() noexcept
 {
   assert(bridge != nullptr);
-// TODO
-//   delete bridge;
+
+  /* closes the connection and detaches the listeners before this
+     object goes away */
+  delete bridge;
 }
 
 PortState
@@ -29,7 +31,7 @@ ApplePort::GetState() const noexcept
 {
   assert(bridge != nullptr);
 
-  return (PortState)bridge->getState();
+  return bridge->getState();
 }
 
 bool

@@ -31,6 +31,8 @@
     <string>public.app-category.navigation</string>
     <key>NSLocationUsageDescription</key>
     <string>XCSoar uses your location to provide onboard GPS navigation and to record your flight track.</string>
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>XCSoar uses Bluetooth to connect to external sensors and flight instruments.</string>
     <key>ITSAppUsesNonExemptEncryption</key>
     <false/>
   </dict>

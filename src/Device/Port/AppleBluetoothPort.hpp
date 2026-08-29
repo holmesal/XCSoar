@@ -3,26 +3,23 @@
 
 #pragma once
 
-#include "util/Compiler.h"
-
 #include <memory>
-#include <tchar.h>
 
 class BluetoothHelper;
 class Port;
 class PortListener;
 class DataHandler;
 
+/**
+ * Open a connection to a Bluetooth LE serial bridge (Nordic UART
+ * Service, Microchip/ISSC transparent UART or HM-10) via
+ * CoreBluetooth.
+ *
+ * Throws on error.
+ *
+ * @param address the CoreBluetooth peripheral identifier
+ */
 std::unique_ptr<Port>
-OpenAppleBluetoothPort(BluetoothHelper &bluetooth_helper,
-                         const TCHAR *address, PortListener *_listener,
-                         DataHandler &_handler);
-
-std::unique_ptr<Port>
-OpenAppleBluetoothServerPort(BluetoothHelper &bluetooth_helper,
-                               PortListener *_listener, DataHandler &_handler);
-
-std::unique_ptr<Port>
-OpenAppleBleHm10Port(BluetoothHelper &bluetooth_helper,
-                       const TCHAR *address, PortListener *_listener,
+OpenAppleBleSerialPort(BluetoothHelper &bluetooth_helper,
+                       const char *address, PortListener *_listener,
                        DataHandler &_handler);

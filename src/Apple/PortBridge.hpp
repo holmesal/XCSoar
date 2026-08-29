@@ -4,41 +4,70 @@
 #pragma once
 
 #include "Device/Port/State.hpp"
-#include "LogFile.hpp"
-#include "NativeInputListener.hpp"
-#include "NativePortListener.hpp"
+
 #include <cstddef>
 #include <span>
 
-class PortBridge {
+#ifdef __OBJC__
+@class XCSBleSerialPort;
+#else
+typedef struct objc_object XCSBleSerialPort;
+#endif
+
+class PortListener;
+class DataHandler;
+
+/**
+ * C++ facade for a CoreBluetooth BLE serial connection.  Mirrors the
+ * API of the Android #PortBridge so #ApplePort can stay a thin
+ * wrapper (like #AndroidPort).
+ *
+ * All methods may be called from any thread.
+ */
+class PortBridge final {
+  XCSBleSerialPort *port;
+
 public:
-  PortBridge(const char *deviceAddress);
+  explicit PortBridge(XCSBleSerialPort *_port) noexcept;
 
-  void setListener(PortListener *listener);
-  void setInputListener(DataHandler *handler);
-  DataHandler *getInputListener();
+  /**
+   * Closes the connection.
+   */
+  ~PortBridge() noexcept;
 
-  int getState() { return static_cast<int>(PortState::READY); }
+  PortBridge(const PortBridge &) = delete;
+  PortBridge &operator=(const PortBridge &) = delete;
 
-  bool drain() { return true; }
+  void setListener(PortListener *listener) noexcept;
+  void setInputListener(DataHandler *handler) noexcept;
 
-  int getBaudRate() const { return -1; }
+  [[gnu::pure]]
+  PortState getState() const noexcept;
 
-  bool setBaudRate(int baud_rate)
-  {
-    (void)baud_rate;
-    return false;
+  /**
+   * Wait until all buffered data has been sent.
+   *
+   * @return false on error or timeout
+   */
+  bool drain();
+
+  constexpr unsigned getBaudRate() const noexcept {
+    return 0;
   }
 
-  virtual std::size_t write(std::span<const std::byte> src);
+  constexpr bool setBaudRate([[maybe_unused]] unsigned baud_rate) noexcept {
+    /* BLE has no baud rate; accept silently like the Android BLE
+       serial port does */
+    return true;
+  }
 
-private:
-  const PortListener *portListener;
-  DataHandler *inputListener;
-  std::string deviceAddress;
-};
-
-class iOSPortBridge : public PortBridge {
-public:
-  std::size_t write(std::span<const std::byte> src) override;
+  /**
+   * Queue data for transmission.  Blocks while the transmit buffer
+   * is full.
+   *
+   * Throws on error.
+   *
+   * @return the number of bytes accepted (always > 0)
+   */
+  std::size_t write(std::span<const std::byte> src);
 };
