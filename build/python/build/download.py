@@ -20,6 +20,15 @@ def __get_any(x: Union[str, Sequence[str]]) -> str:
 
 def __download_one(url: str, path: str) -> None:
     print("download", url)
+    # Prefer curl in a child process: on macOS, using urllib in this
+    # process initialises Network.framework, whose atfork handlers then
+    # intermittently crash (SIGSEGV) the subprocess.fork() calls made
+    # later for tar/cmake/make.
+    import shutil, subprocess
+    curl = shutil.which('curl')
+    if curl is not None:
+        subprocess.check_call([curl, '-fsSL', '--retry', '3', '-o', path, url])
+        return
     urllib.request.urlretrieve(url, path)
 
 def __download(urls: Sequence[str], path: str) -> None:
