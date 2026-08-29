@@ -156,9 +156,13 @@ GetServiceUuids() noexcept
 
 - (const char *)debugName
 {
-  NSString *name = _peripheral.name;
+  /* prefer the advertised name over CBPeripheral.name: the latter
+     comes from the system's GAP name cache and may be stale */
+  NSString *name = _targetName;
+  if (name.length == 0 && _identifier != nil)
+    name = [_manager nameForIdentifier:_identifier.UUIDString];
   if (name.length == 0)
-    name = _targetName;
+    name = _peripheral.name;
   if (name.length == 0)
     name = _identifier.UUIDString;
   return name != nil ? name.UTF8String : "?";
