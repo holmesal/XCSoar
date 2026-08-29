@@ -35,7 +35,6 @@
 #include "Protection.hpp"
 #include "LogFile.hpp"
 #include "UtilsSystem.hpp"
-
 #include "FLARM/Glue.hpp"
 #include "Logger/Logger.hpp"
 #include "Logger/NMEALogger.hpp"
