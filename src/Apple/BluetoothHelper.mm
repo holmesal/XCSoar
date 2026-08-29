@@ -23,6 +23,8 @@ BluetoothHelper *bluetooth_helper;
  */
 static NSString *const kNamesDefaultsKey = @"XCSoarBluetoothDeviceNames";
 
+void *_Nonnull const XCSBluetoothQueueKey = (void *)&XCSBluetoothQueueKey;
+
 /**
  * Bit set in the per-peripheral "already reported" value when the
  * report included a name.
@@ -102,6 +104,8 @@ StateName(CBManagerState state) noexcept
   self = [super init];
   if (self) {
     _queue = dispatch_queue_create("org.xcsoar.bluetooth", DISPATCH_QUEUE_SERIAL);
+    dispatch_queue_set_specific(_queue, XCSBluetoothQueueKey,
+                                XCSBluetoothQueueKey, nullptr);
     ports = [NSMutableArray array];
     reported = [NSMutableDictionary dictionary];
     namesDirty = false;
@@ -292,7 +296,7 @@ StateName(CBManagerState state) noexcept
   if (name.length == 0)
     name = nil;
 
-  const uint64_t features =
+  uint64_t features =
     FeaturesFromServiceUuids(advertisementData[CBAdvertisementDataServiceUUIDsKey]) |
     FeaturesFromServiceUuids(advertisementData[CBAdvertisementDataOverflowServiceUUIDsKey]);
 
@@ -315,6 +319,18 @@ StateName(CBManagerState state) noexcept
     /* anonymous device without a service XCSoar knows: not worth
        listing */
     return;
+
+  if (features != 0 && (features & DetectDeviceListener::FEATURE_BLE_SERIAL) == 0)
+    /* a sensor-only device (heart rate, Sensbox); BLE sensors are not
+       supported on Apple platforms yet, so do not offer it */
+    return;
+
+  if (features == 0)
+    /* a named device which does not advertise any service UUID: it
+       may still be a serial bridge (many adapters put only the name
+       in the advertisement), so offer it as a BLE port; connecting
+       will fail cleanly if it has no serial service */
+    features = DetectDeviceListener::FEATURE_BLE_SERIAL;
 
   const std::lock_guard lock{mutex};
 

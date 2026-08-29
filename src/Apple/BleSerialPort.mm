@@ -49,8 +49,6 @@ static constexpr std::size_t MAX_MTU = 512;
  */
 static constexpr int64_t RECONNECT_DELAY_NS = 1 * NSEC_PER_SEC;
 
-static void *const kQueueSpecificKey = (void *)&kQueueSpecificKey;
-
 /**
  * Describes one of the supported BLE serial profiles.
  */
@@ -142,8 +140,6 @@ GetServiceUuids() noexcept
   if (self) {
     _manager = manager;
     _queue = manager.queue;
-    dispatch_queue_set_specific(_queue, kQueueSpecificKey,
-                                kQueueSpecificKey, nullptr);
     _identifier = identifier;
     _targetName = targetName;
     _state = PortState::LIMBO;
@@ -270,7 +266,7 @@ GetServiceUuids() noexcept
     [_manager portClosed:self];
   };
 
-  if (dispatch_get_specific(kQueueSpecificKey) == kQueueSpecificKey)
+  if (dispatch_get_specific(XCSBluetoothQueueKey) == XCSBluetoothQueueKey)
     block();
   else
     dispatch_sync(_queue, block);

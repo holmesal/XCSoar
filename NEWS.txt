@@ -3,6 +3,9 @@ Version 7.46 - not yet released
   - fix crash when exiting the app #2873
   - fix crash when restarting the app immediately after exit
 * iOS
+  - Bluetooth LE serial ports (Nordic UART Service, Microchip/ISSC
+    transparent UART, HM-10): connect FLARM, varios and GPS via BLE
+    serial adapters, including flight download and declaration #1815
   - use the system keyboard for text entry so special characters
     can be typed, and add a Paste button for the clipboard; the
     Keyboard text-input style keeps XCSoar's own grid #2894

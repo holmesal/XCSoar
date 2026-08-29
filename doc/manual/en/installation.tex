@@ -145,6 +145,12 @@ use Bluetooth or the Android IOIO board.  To use Bluetooth, you need
 to connect the external device to a Bluetooth-to-Serial adapter, such
 as the K6-Bt or the SoarTronic-BT1/2. %Glidertools is defunct.
 
+On iOS, only Bluetooth Low Energy serial adapters can be used (Apple
+does not offer classic Bluetooth serial connections to third-party
+apps).  XCSoar supports adapters implementing the Nordic UART
+Service, the Microchip/ISSC transparent UART or the HM-10 profile;
+they appear as ``BLE port'' in the port list.
+
 
 \section{Software installation}
 

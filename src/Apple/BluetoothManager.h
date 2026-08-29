@@ -22,6 +22,12 @@ class DataHandler;
 
 @class XCSBleSerialPort;
 
+/**
+ * dispatch_queue_set_specific() key identifying the manager's queue,
+ * so code can tell whether it already runs on it.
+ */
+extern void *_Nonnull const XCSBluetoothQueueKey;
+
 NS_ASSUME_NONNULL_BEGIN
 
 /**
