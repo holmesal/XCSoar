@@ -4,45 +4,22 @@
 #import "BluetoothManager.h"
 #include "PortBridge.hpp"
 #include "BluetoothUuids.hpp"
+#include "Device/Port/BleSerialWriteBuffer.hpp"
 #include "Device/Port/Listener.hpp"
 #include "Device/Error.hpp"
 #include "io/DataHandler.hpp"
 #include "LogFile.hpp"
-#include "thread/Mutex.hxx"
-#include "thread/Cond.hxx"
 
 #include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
-#include <mutex>
-#include <stdexcept>
-
-#include <string.h>
-
-/**
- * Size of the transmit buffer.  Port::FullWrite() blocks while it
- * is full, which gives us natural backpressure towards the device
- * drivers (e.g. during FLARM IGC downloads, which are
- * request/response driven).
- */
-static constexpr std::size_t WRITE_BUFFER_SIZE = 4096;
 
 /**
  * How long write() waits for room in the transmit buffer, and how
  * long drain() waits for the buffer to empty.
  */
 static constexpr auto WRITE_TIMEOUT = std::chrono::seconds(5);
-
-/**
- * The ATT default MTU (23) minus the 3 byte ATT header.
- */
-static constexpr std::size_t DEFAULT_MTU = 20;
-
-/**
- * CoreBluetooth caps writes at 512 bytes.
- */
-static constexpr std::size_t MAX_MTU = 512;
 
 /**
  * Delay before retrying after a failed connection attempt.
@@ -106,26 +83,16 @@ GetServiceUuids() noexcept
   CBCharacteristic *_writeCharacteristic;
   CBCharacteristic *_notifyCharacteristic;
   CBCharacteristicWriteType _writeType;
-  std::size_t _mtu;
 
   std::atomic<PortState> _state;
   std::atomic<PortListener *> _listener;
   std::atomic<DataHandler *> _handler;
 
-  /** protects the transmit buffer and the flags below */
-  Mutex _mutex;
-  Cond _cond;
-  std::array<std::byte, WRITE_BUFFER_SIZE> _buffer;
-  std::size_t _head, _tail;
-
-  /** a write-with-response is pending */
-  bool _writeInFlight;
-
-  /** the last asynchronous write failed */
-  bool _writeError;
+  /** the transmit path (thread-safe on its own) */
+  BleSerialWriteBuffer _writeBuffer;
 
   /** a pump block has been queued */
-  bool _pumpScheduled;
+  std::atomic<bool> _pumpScheduled;
 
   /* the following are only accessed on the queue */
   BOOL _closed;
@@ -143,9 +110,7 @@ GetServiceUuids() noexcept
     _identifier = identifier;
     _targetName = targetName;
     _state = PortState::LIMBO;
-    _mtu = DEFAULT_MTU;
-    _head = _tail = 0;
-    _writeInFlight = _writeError = _pumpScheduled = false;
+    _pumpScheduled = false;
   }
   return self;
 }
@@ -183,72 +148,24 @@ GetServiceUuids() noexcept
 
 - (std::size_t)write:(std::span<const std::byte>)src
 {
-  if (src.empty())
-    return 0;
-
-  std::unique_lock lock{_mutex};
-
-  const auto deadline = std::chrono::steady_clock::now() + WRITE_TIMEOUT;
-
-  while (true) {
-    if (_writeError) {
-      _writeError = false;
-      throw std::runtime_error{"BLE write failed"};
-    }
-
-    if (_state != PortState::READY)
-      throw std::runtime_error{"BLE port not connected"};
-
-    if (_head > 0 && _tail == _buffer.size()) {
-      /* make room at the end */
-      std::copy(_buffer.begin() + _head, _buffer.begin() + _tail,
-                _buffer.begin());
-      _tail -= _head;
-      _head = 0;
-    }
-
-    if (_tail < _buffer.size())
-      break;
-
-    if (_cond.wait_until(lock, deadline) == std::cv_status::timeout) {
-      LogFmt("BLE: {}: write timeout, {} bytes pending", [self debugName],
-             _tail - _head);
-      throw DeviceTimeout{"BLE write timeout"};
-    }
+  std::size_t nbytes;
+  try {
+    nbytes = _writeBuffer.Write(src, WRITE_TIMEOUT);
+  } catch (const DeviceTimeout &) {
+    LogFmt("BLE: {}: write timeout, {} bytes pending", [self debugName],
+           _writeBuffer.GetPending());
+    throw;
   }
 
-  const std::size_t nbytes = std::min(src.size(), _buffer.size() - _tail);
-  std::copy_n(src.begin(), nbytes, _buffer.begin() + _tail);
-  _tail += nbytes;
-
-  if (!_pumpScheduled) {
-    _pumpScheduled = true;
+  if (nbytes > 0 && !_pumpScheduled.exchange(true))
     dispatch_async(_queue, ^{ [self pump]; });
-  }
 
   return nbytes;
 }
 
 - (BOOL)drain
 {
-  std::unique_lock lock{_mutex};
-
-  const auto deadline = std::chrono::steady_clock::now() + WRITE_TIMEOUT;
-
-  while (_head != _tail || _writeInFlight) {
-    if (_writeError || _state != PortState::READY)
-      break;
-
-    if (_cond.wait_until(lock, deadline) == std::cv_status::timeout)
-      return NO;
-  }
-
-  if (_writeError) {
-    _writeError = false;
-    return NO;
-  }
-
-  return _head == _tail && !_writeInFlight;
+  return _writeBuffer.Drain(WRITE_TIMEOUT);
 }
 
 - (void)close
@@ -301,17 +218,10 @@ GetServiceUuids() noexcept
  */
 - (void)resetConnection
 {
-  {
-    const std::lock_guard lock{_mutex};
-    _head = _tail = 0;
-    _writeInFlight = false;
-    _cond.notify_all();
-  }
-
+  _writeBuffer.SetReady(false);
   _profile = nullptr;
   _writeCharacteristic = nil;
   _notifyCharacteristic = nil;
-  _mtu = DEFAULT_MTU;
 }
 
 - (BOOL)canSendWriteWithoutResponse
@@ -327,48 +237,34 @@ GetServiceUuids() noexcept
  */
 - (void)pump
 {
-  std::unique_lock lock{_mutex};
   _pumpScheduled = false;
 
-  while (true) {
-    if (_closed || _state != PortState::READY ||
-        _writeCharacteristic == nil || _peripheral == nil)
+  std::array<std::byte, BleSerialWriteBuffer::MAX_MTU> chunk;
+
+  while (!_closed && _state == PortState::READY &&
+         _writeCharacteristic != nil && _peripheral != nil) {
+    const bool with_response = _writeType == CBCharacteristicWriteWithResponse;
+
+    if (!with_response && ![self canSendWriteWithoutResponse]) {
+      /* peripheralIsReadyToSendWriteWithoutResponse: will call pump
+         again */
+      LogDebug("BLE: {}: write queue full, {} bytes pending",
+               [self debugName], _writeBuffer.GetPending());
+      break;
+    }
+
+    const std::size_t nbytes = _writeBuffer.TakeChunk(chunk, with_response);
+    if (nbytes == 0)
+      /* nothing to send, or a write-with-response is still pending
+         (didWriteValueForCharacteristic: will call pump again) */
       break;
 
-    if (_head == _tail)
+    NSData *data = [NSData dataWithBytes:chunk.data() length:nbytes];
+    [_peripheral writeValue:data forCharacteristic:_writeCharacteristic
+                       type:_writeType];
+
+    if (with_response)
       break;
-
-    if (_writeType == CBCharacteristicWriteWithoutResponse) {
-      if (![self canSendWriteWithoutResponse]) {
-        /* peripheralIsReadyToSendWriteWithoutResponse: will call
-           pump again */
-        LogDebug("BLE: {}: write queue full, {} bytes pending",
-                 [self debugName], _tail - _head);
-        break;
-      }
-    } else if (_writeInFlight)
-      /* didWriteValueForCharacteristic: will call pump again */
-      break;
-
-    const std::size_t nbytes = std::min(_tail - _head, _mtu);
-    NSData *chunk = [NSData dataWithBytes:&_buffer[_head] length:nbytes];
-    _head += nbytes;
-    if (_head == _tail)
-      _head = _tail = 0;
-
-    if (_writeType == CBCharacteristicWriteWithResponse)
-      _writeInFlight = true;
-
-    /* wake up write() and drain() */
-    _cond.notify_all();
-
-    CBPeripheral *peripheral = _peripheral;
-    CBCharacteristic *characteristic = _writeCharacteristic;
-    const CBCharacteristicWriteType type = _writeType;
-
-    lock.unlock();
-    [peripheral writeValue:chunk forCharacteristic:characteristic type:type];
-    lock.lock();
   }
 }
 
@@ -577,15 +473,15 @@ didUpdateNotificationStateForCharacteristic:(CBCharacteristic *)characteristic
     /* this is the acknowledgement of our setNotifyValue:NO */
     return;
 
-  std::size_t mtu = [peripheral maximumWriteValueLengthForType:_writeType];
-  _mtu = std::clamp(mtu, DEFAULT_MTU, MAX_MTU);
+  _writeBuffer.SetMtu([peripheral maximumWriteValueLengthForType:_writeType]);
+  _writeBuffer.SetReady(true);
 
   _state = PortState::READY;
   LogFmt("BLE: {}: ready ({}, {}, chunk size {})", [self debugName],
          _profile->name,
          _writeType == CBCharacteristicWriteWithoutResponse
          ? "write without response" : "write with response",
-         _mtu);
+         _writeBuffer.GetMtu());
   [self stateChanged];
 
   /* flush anything that was queued while connecting */
@@ -620,18 +516,11 @@ didUpdateValueForCharacteristic:(CBCharacteristic *)characteristic
 didWriteValueForCharacteristic:(CBCharacteristic *)characteristic
              error:(nullable NSError *)error
 {
-  {
-    const std::lock_guard lock{_mutex};
-    _writeInFlight = false;
-    if (error != nil) {
-      LogFmt("BLE: {}: write failed: {}", [self debugName],
-             error.localizedDescription.UTF8String);
-      _writeError = true;
-      _head = _tail = 0;
-    }
-    _cond.notify_all();
-  }
+  if (error != nil)
+    LogFmt("BLE: {}: write failed: {}", [self debugName],
+           error.localizedDescription.UTF8String);
 
+  _writeBuffer.ChunkCompleted(error == nil);
   [self pump];
 }
 

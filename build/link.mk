@@ -65,7 +65,8 @@ ifneq ($$(filter $$(SRC)/Device/Port/ConfiguredPort.cpp $$(SRC)/Device/Config.cp
 ifeq ($$(filter $$(SRC)/Apple/BluetoothHelper.mm,$$($(2)_SOURCES)),)
 $(2)_SOURCES += \
 	$$(SRC)/Apple/BluetoothHelper.mm \
-	$$(SRC)/Apple/BleSerialPort.mm
+	$$(SRC)/Apple/BleSerialPort.mm \
+	$$(SRC)/Device/Port/BleSerialWriteBuffer.cpp
 endif
 endif
 ifneq ($$(filter $$(SRC)/Device/Port/ConfiguredPort.cpp,$$($(2)_SOURCES)),)

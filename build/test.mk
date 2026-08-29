@@ -286,6 +286,15 @@ TEST_SKYSIGHT_LIVE_TILE_UTILS_SOURCES = \
 TEST_SKYSIGHT_LIVE_TILE_UTILS_DEPENDS = TIME UTIL
 $(eval $(call link-program,TestSkySightLiveTileUtils,TEST_SKYSIGHT_LIVE_TILE_UTILS))
 
+TEST_NAMES += TestBleSerialWriteBuffer
+
+TEST_BLE_SERIAL_WRITE_BUFFER_SOURCES = \
+	$(SRC)/Device/Port/BleSerialWriteBuffer.cpp \
+	$(TEST_SRC_DIR)/tap.c \
+	$(TEST_SRC_DIR)/TestBleSerialWriteBuffer.cpp
+TEST_BLE_SERIAL_WRITE_BUFFER_DEPENDS = THREAD TIME UTIL
+$(eval $(call link-program,TestBleSerialWriteBuffer,TEST_BLE_SERIAL_WRITE_BUFFER))
+
 TEST_NAMES += TestWeatherOverlayPagePlacement
 
 TEST_WEATHER_OVERLAY_PAGE_PLACEMENT_SOURCES = \
