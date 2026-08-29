@@ -286,6 +286,15 @@ TEST_SKYSIGHT_LIVE_TILE_UTILS_SOURCES = \
 TEST_SKYSIGHT_LIVE_TILE_UTILS_DEPENDS = TIME UTIL
 $(eval $(call link-program,TestSkySightLiveTileUtils,TEST_SKYSIGHT_LIVE_TILE_UTILS))
 
+TEST_NAMES += TestBleSerialWriteBuffer
+
+TEST_BLE_SERIAL_WRITE_BUFFER_SOURCES = \
+	$(SRC)/Device/Port/BleSerialWriteBuffer.cpp \
+	$(TEST_SRC_DIR)/tap.c \
+	$(TEST_SRC_DIR)/TestBleSerialWriteBuffer.cpp
+TEST_BLE_SERIAL_WRITE_BUFFER_DEPENDS = THREAD TIME UTIL
+$(eval $(call link-program,TestBleSerialWriteBuffer,TEST_BLE_SERIAL_WRITE_BUFFER))
+
 TEST_NAMES += TestWeatherOverlayPagePlacement
 
 TEST_WEATHER_OVERLAY_PAGE_PLACEMENT_SOURCES = \
@@ -325,7 +334,8 @@ TEST_NOTAM_SOURCES = \
 	$(SRC)/Profile/NumericValue.cpp \
 	$(SRC)/Profile/StringValue.cpp \
 	$(SRC)/Repository/FileType.cpp \
-	$(TEST_SRC_DIR)/FakeLocalPath.cpp \
+	$(SRC)/LocalPath.cpp \
+	$(TEST_SRC_DIR)/FakeFlarmGlue.cpp \
 	$(TEST_SRC_DIR)/FakeLogFile.cpp \
 	$(TEST_SRC_DIR)/tap.c \
 	$(TEST_SRC_DIR)/TestNOTAM.cpp
@@ -480,7 +490,8 @@ TEST_PLANES_SOURCES = \
 	$(SRC)/Polar/Parser.cpp \
 	$(SRC)/Plane/PlaneFileGlue.cpp \
 	$(SRC)/Repository/FileType.cpp \
-	$(TEST_SRC_DIR)/FakeLocalPath.cpp \
+	$(SRC)/LocalPath.cpp \
+	$(TEST_SRC_DIR)/FakeFlarmGlue.cpp \
 	$(TEST_SRC_DIR)/tap.c \
 	$(TEST_SRC_DIR)/FakeLogFile.cpp \
 	$(TEST_SRC_DIR)/TestPlanes.cpp
@@ -1714,6 +1725,8 @@ RUN_DEVICE_DRIVER_SOURCES = \
 	$(TEST_SRC_DIR)/FakeLanguage.cpp \
 	$(TEST_SRC_DIR)/FakeGeoid.cpp \
 	$(TEST_SRC_DIR)/FakeLogFile.cpp \
+	$(SRC)/LocalPath.cpp \
+	$(TEST_SRC_DIR)/FakeFlarmGlue.cpp \
 	$(TEST_SRC_DIR)/RunDeviceDriver.cpp
 RUN_DEVICE_DRIVER_DEPENDS = DRIVER OPERATION IO LIBNMEA OS THREAD GEO MATH UTIL TIME
 $(eval $(call link-program,RunDeviceDriver,RUN_DEVICE_DRIVER))
@@ -1739,6 +1752,8 @@ RUN_DECLARE_SOURCES = \
 	$(TEST_SRC_DIR)/FakeDialogs.cpp \
 	$(TEST_SRC_DIR)/FakeLogFile.cpp \
 	$(TEST_SRC_DIR)/DebugPort.cpp \
+	$(SRC)/LocalPath.cpp \
+	$(TEST_SRC_DIR)/FakeFlarmGlue.cpp \
 	$(TEST_SRC_DIR)/RunDeclare.cpp
 RUN_DECLARE_DEPENDS = DRIVER PORT LIBNMEA ASYNC LIBNET OPERATION IO OS THREAD WAYPOINT GEO TIME MATH UTIL
 $(eval $(call link-program,RunDeclare,RUN_DECLARE))
@@ -1831,6 +1846,8 @@ RUN_FLIGHT_LIST_SOURCES = \
 	$(TEST_SRC_DIR)/FakeLogFile.cpp \
 	$(TEST_SRC_DIR)/FakeGeoid.cpp \
 	$(TEST_SRC_DIR)/DebugPort.cpp \
+	$(SRC)/LocalPath.cpp \
+	$(TEST_SRC_DIR)/FakeFlarmGlue.cpp \
 	$(TEST_SRC_DIR)/RunFlightList.cpp
 RUN_FLIGHT_LIST_DEPENDS = DRIVER PORT LIBNMEA ASYNC LIBNET OPERATION IO OS THREAD GEO TIME MATH UTIL
 $(eval $(call link-program,RunFlightList,RUN_FLIGHT_LIST))
@@ -1855,6 +1872,8 @@ RUN_DOWNLOAD_FLIGHT_SOURCES = \
 	$(TEST_SRC_DIR)/FakeLogFile.cpp \
 	$(TEST_SRC_DIR)/FakeGeoid.cpp \
 	$(TEST_SRC_DIR)/DebugPort.cpp \
+	$(SRC)/LocalPath.cpp \
+	$(TEST_SRC_DIR)/FakeFlarmGlue.cpp \
 	$(TEST_SRC_DIR)/RunDownloadFlight.cpp
 RUN_DOWNLOAD_FLIGHT_DEPENDS = DRIVER PORT ASYNC LIBNMEA LIBNET OPERATION IO OS THREAD GEO TIME MATH UTIL
 $(eval $(call link-program,RunDownloadFlight,RUN_DOWNLOAD_FLIGHT))

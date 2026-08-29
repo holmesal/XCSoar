@@ -7,6 +7,10 @@
 #include "Device/Port/Port.hpp"
 #include "Device/Port/ConfiguredPort.hpp"
 
+#ifdef __APPLE__
+#include "Apple/BluetoothHelper.hpp"
+#endif
+
 #include <stdexcept>
 
 DeviceConfig
@@ -31,6 +35,21 @@ ParsePortArgs(Args &args)
     config.k6bt = true;
     return config;
   }
+
+#ifdef __APPLE__
+  if (config.path.equals("ble")) {
+    /* Bluetooth LE serial bridge (NUS/ISSC/HM-10); the argument is
+       the CoreBluetooth peripheral identifier or, for convenience,
+       the advertised device name */
+    config.port_type = DeviceConfig::PortType::BLE_SERIAL;
+    config.bluetooth_mac = args.ExpectNext();
+
+    if (bluetooth_helper == nullptr)
+      bluetooth_helper = new BluetoothHelper();
+
+    return config;
+  }
+#endif
 
   if (config.path.equals("pty")) {
     config.port_type = DeviceConfig::PortType::PTY;
@@ -72,7 +91,11 @@ std::unique_ptr<Port>
 DebugPort::Open(EventLoop &event_loop, Cares::Channel &cares,
                 DataHandler &handler)
 {
-  auto port = OpenPort(event_loop, cares, config, this, handler);
+  auto port = OpenPort(event_loop, cares,
+#ifdef __APPLE__
+                       bluetooth_helper,
+#endif
+                       config, this, handler);
   if (port == nullptr)
     throw std::runtime_error("Failed to open port");
 
