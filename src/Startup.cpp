@@ -131,6 +131,7 @@
 #ifdef __APPLE__
 #include "Apple/Services.hpp"
 #include "Apple/BackgroundSave.hpp"
+#include "Apple/BluetoothHelper.hpp"
 #endif
 
 #ifdef HAVE_EDL
@@ -524,6 +525,9 @@ Startup(UI::Display &display)
 #ifdef ANDROID
     *context, permission_manager,
     bluetooth_helper, ioio_helper, usb_serial_helper,
+#endif
+#ifdef __APPLE__
+    bluetooth_helper,
 #endif
   };
 

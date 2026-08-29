@@ -653,6 +653,11 @@ endif
 
 ifeq ($(TARGET_IS_DARWIN),y)
 XCSOAR_SOURCES += \
+	$(SRC)/Device/Port/AppleBluetoothPort.cpp \
+	$(SRC)/Device/Port/ApplePort.cpp \
+	$(SRC)/Device/Port/BleSerialWriteBuffer.cpp \
+	$(SRC)/Apple/BluetoothHelper.mm \
+	$(SRC)/Apple/BleSerialPort.mm \
 	$(SRC)/Apple/Services.cpp \
 	$(SRC)/Apple/BackgroundSave.cpp \
 	$(SRC)/Apple/SoundUtil.cpp \

@@ -16,6 +16,11 @@
 #include "AndroidUsbSerialPort.hpp"
 #endif
 
+#ifdef __APPLE__
+#include "Apple/BluetoothHelper.hpp"
+#include "AppleBluetoothPort.hpp"
+#endif
+
 #if defined(HAVE_POSIX)
 #include "TTYPort.hpp"
 #else
@@ -69,6 +74,8 @@ OpenPortInternal(EventLoop &event_loop, Cares::Channel &cares,
                  BluetoothHelper *bluetooth_helper,
                  IOIOHelper *ioio_helper,
                  UsbSerialHelper *usb_serial_helper,
+#elif defined(__APPLE__)
+                 BluetoothHelper *bluetooth_helper,
 #endif
                  const DeviceConfig &config, PortListener *listener,
                  DataHandler &handler)
@@ -98,6 +105,16 @@ OpenPortInternal(EventLoop &event_loop, Cares::Channel &cares,
     return OpenAndroidBleSerialPort(*bluetooth_helper,
                                     config.bluetooth_mac,
                                     listener, handler);
+#elif defined(__APPLE__)
+    if (config.bluetooth_mac.empty())
+      throw std::runtime_error("No Bluetooth address configured");
+
+    if (bluetooth_helper == nullptr)
+      throw std::runtime_error("Bluetooth not available");
+
+    return OpenAppleBleSerialPort(*bluetooth_helper,
+                                  config.bluetooth_mac,
+                                  listener, handler);
 #else
     throw std::runtime_error("Bluetooth not available");
 #endif
@@ -112,6 +129,9 @@ OpenPortInternal(EventLoop &event_loop, Cares::Channel &cares,
 
     return OpenAndroidBluetoothPort(*bluetooth_helper, config.bluetooth_mac,
                                     listener, handler);
+#elif defined(__APPLE__)
+    /* iOS has no public Bluetooth Classic API for non-MFi devices */
+    throw std::runtime_error("Bluetooth Classic is not available; use a BLE serial adapter");
 #else
     throw std::runtime_error("Bluetooth not available");
 #endif
@@ -244,6 +264,8 @@ OpenPort(EventLoop &event_loop, Cares::Channel &cares,
          BluetoothHelper *bluetooth_helper,
          IOIOHelper *ioio_helper,
          UsbSerialHelper *usb_serial_helper,
+#elif defined(__APPLE__)
+         BluetoothHelper *bluetooth_helper,
 #endif
          const DeviceConfig &config, PortListener *listener,
          DataHandler &handler)
@@ -253,6 +275,8 @@ OpenPort(EventLoop &event_loop, Cares::Channel &cares,
                                bluetooth_helper,
                                ioio_helper,
                                usb_serial_helper,
+#elif defined(__APPLE__)
+                               bluetooth_helper,
 #endif
                                config, listener, handler);
   if (port != nullptr)

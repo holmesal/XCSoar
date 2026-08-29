@@ -7,6 +7,7 @@
 #include "LogFile.hpp"
 #include "Services.hpp"
 #include "thread/Mutex.hxx"
+#include "BluetoothHelper.hpp"
 #import <AVFoundation/AVFoundation.h>
 
 #if TARGET_OS_IPHONE
@@ -94,6 +95,9 @@ InitializeAppleServices()
 #if TARGET_OS_IPHONE
   ActivateAudioSession();
 #endif
+
+  // Setup bluetooth helper (CoreBluetooth is available on iOS and macOS)
+  bluetooth_helper = new BluetoothHelper();
 }
 
 // Cleanup apple services - this will be called from XCSoar shutdown
@@ -110,7 +114,14 @@ DeinitializeAppleServices()
     LogFmt("AVAudioSession deinitialize error: {}",
            [[error localizedDescription] UTF8String]);
   }
+
 #endif
+
+  // Deinitialize bluetooth helper
+  if (bluetooth_helper) {
+    delete bluetooth_helper;
+    bluetooth_helper = nullptr;
+  }
 }
 
 #endif

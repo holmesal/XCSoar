@@ -18,6 +18,7 @@
 #endif
 
 #ifdef __APPLE__
+#include "Apple/BluetoothHelper.hpp"
 #include "Apple/InternalSensors.hpp"
 #endif
 
@@ -30,6 +31,9 @@ DeviceFactory::OpenPort(const DeviceConfig &config, PortListener *listener,
                     bluetooth_helper,
                     ioio_helper,
                     usb_serial_helper,
+#endif
+#ifdef __APPLE__
+                    bluetooth_helper,
 #endif
                     config, listener, handler);
 }

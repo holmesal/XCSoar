@@ -59,6 +59,23 @@ ifeq ($$(filter $$(SRC)/Apple/PathProvider.cpp,$$($(2)_SOURCES)),)
 $(2)_SOURCES += $$(SRC)/Apple/PathProvider.cpp
 endif
 endif
+# Device/Config.cpp references the CoreBluetooth helper, and
+# ConfiguredPort.cpp additionally the BLE serial Port implementation
+ifneq ($$(filter $$(SRC)/Device/Port/ConfiguredPort.cpp $$(SRC)/Device/Config.cpp,$$($(2)_SOURCES)),)
+ifeq ($$(filter $$(SRC)/Apple/BluetoothHelper.mm,$$($(2)_SOURCES)),)
+$(2)_SOURCES += \
+	$$(SRC)/Apple/BluetoothHelper.mm \
+	$$(SRC)/Apple/BleSerialPort.mm \
+	$$(SRC)/Device/Port/BleSerialWriteBuffer.cpp
+endif
+endif
+ifneq ($$(filter $$(SRC)/Device/Port/ConfiguredPort.cpp,$$($(2)_SOURCES)),)
+ifeq ($$(filter $$(SRC)/Device/Port/ApplePort.cpp,$$($(2)_SOURCES)),)
+$(2)_SOURCES += \
+	$$(SRC)/Device/Port/ApplePort.cpp \
+	$$(SRC)/Device/Port/AppleBluetoothPort.cpp
+endif
+endif
 endif
 
 # Compile

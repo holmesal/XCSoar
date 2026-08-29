@@ -20,6 +20,13 @@
 #include "Android/BluetoothHelper.hpp"
 #include "Android/UsbSerialHelper.hpp"
 #include "Android/DetectDeviceListener.hpp"
+#endif
+
+#ifdef __APPLE__
+#include "Apple/BluetoothHelper.hpp"
+#endif
+
+#if defined(ANDROID) || defined(__APPLE__)
 #include "thread/Mutex.hxx"
 #include <list>
 #endif
@@ -66,7 +73,7 @@ private:
 
 class PortPickerWidget
   : public ListWidget
-#ifdef ANDROID
+#if defined(ANDROID) || defined(__APPLE__)
   , DetectDeviceListener
 #endif
 {
@@ -78,10 +85,15 @@ class PortPickerWidget
 
   ComboList combo_list;
 
+#ifdef __APPLE__
+  bool detect_listener_added = false;
+#endif
 #ifdef ANDROID
   Java::LocalObject detect_listener;
   Java::LocalObject usb_serial_detect_listener;
+#endif
 
+#if defined(ANDROID) || defined(__APPLE__)
   struct DetectedPort {
     DeviceConfig::PortType type;
     std::string address, name;
@@ -137,6 +149,12 @@ public:
 
   void Show(const PixelRect &rc) noexcept override {
     ListWidget::Show(rc);
+#ifdef __APPLE__
+    if (bluetooth_helper != nullptr && bluetooth_helper->HasLe()) {
+      bluetooth_helper->AddDetectDeviceListener(*this);
+      detect_listener_added = true;
+    }
+#endif
 
 #ifdef ANDROID
     if (bluetooth_helper != nullptr) {
@@ -155,6 +173,12 @@ public:
   }
 
   void Hide() noexcept override {
+#ifdef __APPLE__
+    if (detect_listener_added) {
+      bluetooth_helper->RemoveDetectDeviceListener(*this);
+      detect_listener_added = false;
+    }
+#endif
 #ifdef ANDROID
     if (detect_listener) {
       bluetooth_helper->RemoveDetectDeviceListener(detect_listener.GetEnv(),
@@ -187,7 +211,7 @@ public:
     dialog.SetModalResult(mrOK);
   }
 
-#ifdef ANDROID
+#if defined(ANDROID) || defined(__APPLE__)
 private:
   /* virtual methods from class DetectDeviceListener */
   void OnDeviceDetected(Type type, const char *address,
@@ -218,7 +242,7 @@ PortPickerWidget::ReloadComboList() noexcept
   list.Invalidate();
 }
 
-#ifdef ANDROID
+#if defined(ANDROID) || defined(__APPLE__)
 
 void
 PortPickerWidget::OnDeviceDetected(Type type, const char *address,
