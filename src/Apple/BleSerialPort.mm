@@ -210,8 +210,11 @@ GetServiceUuids() noexcept
     if (_tail < _buffer.size())
       break;
 
-    if (_cond.wait_until(lock, deadline) == std::cv_status::timeout)
+    if (_cond.wait_until(lock, deadline) == std::cv_status::timeout) {
+      LogFmt("BLE: {}: write timeout, {} bytes pending", [self debugName],
+             _tail - _head);
       throw DeviceTimeout{"BLE write timeout"};
+    }
   }
 
   const std::size_t nbytes = std::min(src.size(), _buffer.size() - _tail);
@@ -336,10 +339,13 @@ GetServiceUuids() noexcept
       break;
 
     if (_writeType == CBCharacteristicWriteWithoutResponse) {
-      if (![self canSendWriteWithoutResponse])
+      if (![self canSendWriteWithoutResponse]) {
         /* peripheralIsReadyToSendWriteWithoutResponse: will call
            pump again */
+        LogDebug("BLE: {}: write queue full, {} bytes pending",
+                 [self debugName], _tail - _head);
         break;
+      }
     } else if (_writeInFlight)
       /* didWriteValueForCharacteristic: will call pump again */
       break;
@@ -631,6 +637,7 @@ didWriteValueForCharacteristic:(CBCharacteristic *)characteristic
 
 - (void)peripheralIsReadyToSendWriteWithoutResponse:(CBPeripheral *)peripheral
 {
+  LogDebug("BLE: {}: ready for more writes", [self debugName]);
   [self pump];
 }
 
