@@ -132,6 +132,10 @@ DeviceDescriptor::GetState() const noexcept
     return PortState::READY;
 #endif
 
+#ifdef __APPLE__
+    return PortState::READY;
+#endif
+
   return PortState::FAILED;
 }
 
@@ -358,6 +362,12 @@ DeviceDescriptor::OpenBluetoothSensor()
     return true;
 
   java_sensor = new Java::GlobalCloseable(factory.OpenBluetoothSensor(config, *this));
+  return true;
+#elif defined(__APPLE__)
+  if (is_simulator())
+    return true;
+
+  factory.OpenBluetoothSensor(config, *this);
   return true;
 #else
   return false;

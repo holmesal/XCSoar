@@ -3,6 +3,10 @@
 
 #pragma once
 
+class BluetoothHelper;
+
+extern BluetoothHelper *bluetooth_helper;
+
 void InitializeAppleServices();
 void DeinitializeAppleServices();
 
